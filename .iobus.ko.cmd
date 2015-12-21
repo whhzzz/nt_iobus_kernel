@@ -1,0 +1,1 @@
+cmd_/home/hit_wy/freescale/st100/iobus/iobus/iobus.ko := arm-none-linux-gnueabi-ld -EL -r  -T /home/hit_wy/freescale/st100/kernel/linux-2.6.35.3/scripts/module-common.lds --build-id -o /home/hit_wy/freescale/st100/iobus/iobus/iobus.ko /home/hit_wy/freescale/st100/iobus/iobus/iobus.o /home/hit_wy/freescale/st100/iobus/iobus/iobus.mod.o
