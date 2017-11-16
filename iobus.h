@@ -8,10 +8,9 @@
 typedef struct {
 	struct cdev cdev;
 	void __iomem *iomux_regs;
-	void __iomem *gpio4_regs;
+	void __iomem *gpio2_regs;
 	void __iomem *gpio3_regs;
-	void __iomem *gpio1_regs;
-	void __iomem *gpio7_regs;
+	void __iomem *gpio5_regs;
 	unsigned char recv_buf[256];
 	unsigned char send_buf[256];
 	bool send_stat;
@@ -24,69 +23,76 @@ typedef struct {
 }IOBUS_DEV;
 
 #define DEV_NAME				"iobus"
-#define CPLD_ADDR_SHIFT			6
+#define CPLD_ADDR_SHIFT			0
 #define CPLD_DATA_SHIFT			16
 #define IDLE					false
 #define BUSY					true
 /* IOMUX */
 #define IOMUX_MEM_SIZE			0x3FFF
-#define IOMUX_BASE				0x53FA8000
-#define IOMUX_SW_CTRL_GPIO1_0	0x314
-#define IOMUX_SW_CTRL_GPIO1_1	0x318
-#define IOMUX_SW_CTRL_GPIO1_8	0x338
-#define IOMUX_SW_CTRL_GPIO3_16	0x118
-#define IOMUX_SW_CTRL_GPIO3_17	0x11C
-#define IOMUX_SW_CTRL_GPIO3_18	0x120
-#define IOMUX_SW_CTRL_GPIO3_19	0x124
-#define IOMUX_SW_CTRL_GPIO3_20	0x128
-#define IOMUX_SW_CTRL_GPIO3_21	0x12C
-#define IOMUX_SW_CTRL_GPIO3_22	0x130
-#define IOMUX_SW_CTRL_GPIO3_23	0x134
-#define IOMUX_SW_CTRL_GPIO4_6	0x24
-#define IOMUX_SW_CTRL_GPIO4_7	0x28
-#define IOMUX_SW_CTRL_GPIO4_8	0x2C
-#define IOMUX_SW_CTRL_GPIO4_9	0x30
-#define IOMUX_SW_CTRL_GPIO4_10	0x34
-#define IOMUX_SW_CTRL_GPIO4_11	0x38
-#define IOMUX_SW_CTRL_GPIO4_12	0x3C
-#define IOMUX_SW_CTRL_GPIO4_13	0x40
-#define IOMUX_SW_CTRL_GPIO4_14	0x44
-#define IOMUX_SW_CTRL_GPIO4_15	0x48
+#define IOMUX_BASE				0x020E0000
+#define IOMUX_SW_CTRL_GPIO3_0	0x114
+#define IOMUX_SW_CTRL_GPIO3_1	0x118
+#define IOMUX_SW_CTRL_GPIO3_2	0x11C
+#define IOMUX_SW_CTRL_GPIO3_3	0x120
+#define IOMUX_SW_CTRL_GPIO3_4	0x124
+#define IOMUX_SW_CTRL_GPIO3_5	0x128
+#define IOMUX_SW_CTRL_GPIO3_6	0x12C
+#define IOMUX_SW_CTRL_GPIO3_7	0x130
+#define IOMUX_SW_CTRL_GPIO3_8	0x134
+#define IOMUX_SW_CTRL_GPIO3_9	0x138
+#define IOMUX_SW_CTRL_GPIO3_10	0x13C
+#define IOMUX_SW_CTRL_GPIO3_11	0x140
+#define IOMUX_SW_CTRL_GPIO3_12	0x144
+#define IOMUX_SW_CTRL_GPIO3_13	0x148
+#define IOMUX_SW_CTRL_GPIO3_14	0x14C
+#define IOMUX_SW_CTRL_GPIO3_15	0x150
+#define IOMUX_SW_CTRL_GPIO3_16	0x90
+#define IOMUX_SW_CTRL_GPIO3_17	0x94
+#define IOMUX_SW_CTRL_GPIO3_18	0x98
+#define IOMUX_SW_CTRL_GPIO3_19	0x9C
+#define IOMUX_SW_CTRL_GPIO3_20	0xA0
+#define IOMUX_SW_CTRL_GPIO3_21	0xA4
+#define IOMUX_SW_CTRL_GPIO3_22	0xA8
+#define IOMUX_SW_CTRL_GPIO3_23	0xAC
+#define IOMUX_SW_CTRL_GPIO3_24	0xB4
+#define IOMUX_SW_CTRL_GPIO3_25	0xB8
+#define IOMUX_SW_CTRL_GPIO3_26	0xBC
+#define IOMUX_SW_CTRL_GPIO3_27	0xC0
+#define IOMUX_SW_CTRL_GPIO3_28	0xC4
+#define IOMUX_SW_CTRL_GPIO3_29	0xC8
+#define IOMUX_SW_CTRL_GPIO3_30	0xCC
+#define IOMUX_SW_CTRL_GPIO3_31	0xD0
+#define IOMUX_SW_CTRL_GPIO2_25  0x100
+#define IOMUX_SW_CTRL_GPIO2_26  0x104
+#define IOMUX_SW_CTRL_GPIO5_0   0x154
 
-#define IOMUX_MOD_GPIO			0x1
+
+#define IOMUX_MOD_GPIO			0x5
 #define IOMUX_MOD_MSK			0x7
 
 /* GPIO3 */
 #define GPIO3_MEM_SIZE			0x3FFF
-#define GPIO3_BASE				0x53F8C000
+#define GPIO3_BASE				0x020A4000
 #define GPIO3_DR				0
 #define GPIO3_GDIR				0x4
-
+#define GPIO3_DIR_ADDR_OUT		0x1FF
+#define GPIO3_ADDR_MSK			0xFFFFFE00
 #define GPIO3_DATA_MSK			0xFF00FFFF
-/* GPIO4 */
-#define GPIO4_MEM_SIZE			0x3FFF
-#define GPIO4_BASE				0x53F90000
-#define GPIO4_DR				0
-#define GPIO4_GDIR				0x4
-#define GPIO4_ICR1				0xC
-#define GPIO4_ICR15_RISING		0x80000000
-#define GPIO4_IMR				0x14
-#define GPIO4_IMR15_ENABLE		0x8000
-#define GPIO4_ISR				0x18 
-#define GPIO4_DIR_ADDR_OUT		0x7FC0
-#define GPIO4_ADDR_MSK			0xFFFF803F
-#define GPIO4_15				(32*3+15)
-/* GPIO1 */
-#define GPIO1_MEM_SIZE			0x3FFF
-#define GPIO1_BASE				0x53F84000
-#define GPIO1_DR				0
-#define GPIO1_GDIR				0x4
-
-#define GPIO1_DIR_RDWR_OUT		0x3
-#define GPIO1_SET_WR			0x1
-#define GPIO1_CLR_WR			0xFFFFFFFE
-#define GPIO1_SET_RD			0x2
-#define GPIO1_CLR_RD			0xFFFFFFFD
+/* GPIO2 */
+#define GPIO2_MEM_SIZE			0x3FFF
+#define GPIO2_BASE				0x020A0000
+#define GPIO2_DR				0
+#define GPIO2_GDIR				0x4
+#define GPIO2_DIR_RDWR_OUT		0x06000000
+/* GPIO5 */
+#define GPIO5_MEM_SIZE   		0x3FFF
+#define GPIO5_BASE				0x020AC000
+#define GPIO5_ICR1				0xC
+#define GPIO5_ICR0_RISING		0x00000002
+#define GPIO5_IMR				0x14
+#define GPIO5_IMR0_ENABLE		0x1
+#define GPIO5_ISR				0x18 
+#define GPIO5_0_IRQ				(32*4+0)
 
 /* CPLD REGISTERS */
 #define TCR						0x100	//发送控制寄存器 控制发送状态 如帧间隔 前导码等 

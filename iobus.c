@@ -8,16 +8,27 @@
 #include <linux/errno.h>
 #include <linux/slab.h>
 #include <linux/gpio.h>
+#include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/poll.h>
 #include <linux/delay.h>
 #include <asm/uaccess.h>
+#include <linux/timer.h>
+#include <linux/jiffies.h>
 #include "iobus.h"
 
+static struct timer_list wr_timer;
 static dev_t devno;
 static struct file_operations fops;
 static struct class *iobus_dev_class;
 static IOBUS_DEV *iobus_dev_glb;
+ 
+static void wr_timer_func(unsigned long data)
+{
+	IOBUS_DEV *iobus_dev = (IOBUS_DEV *)data;	
+	iobus_dev->send_stat = IDLE;	
+	wake_up_interruptible(&iobus_dev->send_wq);
+}
 
 /**
  * @brief IO脚操作模拟CPLD并行总线时序 
@@ -33,22 +44,22 @@ static IOBUS_DEV *iobus_dev_glb;
  */
 inline void set_wr(IOBUS_DEV *iobus_dev) 
 {
-	iowrite32(ioread32(iobus_dev->gpio1_regs + GPIO1_DR) & 0xFFFFFFFE, iobus_dev->gpio1_regs + GPIO1_DR);
+	iowrite32(ioread32(iobus_dev->gpio2_regs + GPIO2_DR) & 0xFBFFFFFF, iobus_dev->gpio2_regs + GPIO2_DR);
 }
 
 inline void clr_wr(IOBUS_DEV *iobus_dev) 
 {
-	iowrite32(ioread32(iobus_dev->gpio1_regs + GPIO1_DR) | 0x1, iobus_dev->gpio1_regs + GPIO1_DR);
+	iowrite32(ioread32(iobus_dev->gpio2_regs + GPIO2_DR) | 0x04000000, iobus_dev->gpio2_regs + GPIO2_DR);
 }
 
 inline void set_rd(IOBUS_DEV *iobus_dev)
 {
-	iowrite32(ioread32(iobus_dev->gpio1_regs + GPIO1_DR) & 0xFFFFFFFD, iobus_dev->gpio1_regs + GPIO1_DR);
+	iowrite32(ioread32(iobus_dev->gpio2_regs + GPIO2_DR) & 0xFDFFFFFF, iobus_dev->gpio2_regs + GPIO2_DR);
 }
 
 inline void clr_rd(IOBUS_DEV *iobus_dev)
 {
-	iowrite32(ioread32(iobus_dev->gpio1_regs + GPIO1_DR) | 0x2, iobus_dev->gpio1_regs + GPIO1_DR);
+	iowrite32(ioread32(iobus_dev->gpio2_regs + GPIO2_DR) | 0x02000000, iobus_dev->gpio2_regs + GPIO2_DR);
 }
 
 inline void set_data_in(IOBUS_DEV *iobus_dev)
@@ -63,7 +74,7 @@ inline void set_data_out(IOBUS_DEV *iobus_dev)
 
 inline void set_addr(IOBUS_DEV *iobus_dev, int addr)
 {
-	iowrite32((ioread32(iobus_dev->gpio4_regs + GPIO4_DR) & GPIO4_ADDR_MSK) | (addr << CPLD_ADDR_SHIFT), iobus_dev->gpio4_regs + GPIO4_DR);
+	iowrite32((ioread32(iobus_dev->gpio3_regs + GPIO3_DR) & GPIO3_ADDR_MSK) | (addr << CPLD_ADDR_SHIFT), iobus_dev->gpio3_regs + GPIO3_DR);
 }
 
 inline void write_data(IOBUS_DEV *iobus_dev, unsigned char data)
@@ -99,35 +110,39 @@ inline void write_cpld(IOBUS_DEV *iobus_dev, int addr, unsigned char data)
   */
 inline unsigned char read_cpld(IOBUS_DEV *iobus_dev, int addr)
 {
+	unsigned char data = 0;
 	set_data_in(iobus_dev);
 	set_addr(iobus_dev, addr);
     set_rd(iobus_dev);
+	ndelay(10);
+	data = read_data(iobus_dev);
 	clr_rd(iobus_dev);
-	return read_data(iobus_dev);
+	return data;
+//	return read_data(iobus_dev);
 }
 
 /** 
   * @brief GPIO配置 
   * 利用GPIO口模拟ARM和CPLD之间通信的并行总线
-  * gpio4-6 ~ gpio4-15 对应地址线 A0 ~ A9
+  * gpio3-0 ~ gpio3-9 对应地址线 A0 ~ A9
   * gpio3-16 ~ gpio3-23 对应数据线 D0 ~ D7
-  * gpio1-0 对应读信号 nOE
-  * gpio1-1 对应写信号 nWR
-  * gpio7-7 对应HDLC中断信号 INT
+  * gpio2-25 对应读信号 nOE
+  * gpio2-26 对应写信号 nWR
+  * gpio5-0 对应HDLC中断信号 INT
   */
 void gpio_init(IOBUS_DEV *iobus_dev) 
 {
 /* 配置并行总线地址gpio4_6~gpio4_15对应IO的复用模式并设置地址IO为输出 */
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_6);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_7);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_8);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_9);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_10);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_11);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_12);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_13);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_14);
-	iowrite32(GPIO4_DIR_ADDR_OUT | ioread32(iobus_dev->gpio4_regs + GPIO4_GDIR), iobus_dev->gpio4_regs + GPIO4_GDIR);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_0);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_1);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_2);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_3);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_4);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_5);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_6);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_7);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_8);
+	iowrite32(GPIO3_DIR_ADDR_OUT | ioread32(iobus_dev->gpio3_regs + GPIO3_GDIR), iobus_dev->gpio3_regs + GPIO3_GDIR);
 /* 配置并行总线数据gpio3_16~gpio3_23的IO复用模式 */
 	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_16);
 	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_17);
@@ -137,16 +152,14 @@ void gpio_init(IOBUS_DEV *iobus_dev)
 	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_21);
 	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_22);
 	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO3_23);
-/* 配置控制并行总线读写管脚gpio1_0(WR) gpio1_1(RD)的IO复用模式并设置为输出 */
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO1_0);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO1_1);	
-	iowrite32(GPIO1_DIR_RDWR_OUT | ioread32(iobus_dev->gpio1_regs + GPIO1_GDIR), iobus_dev->gpio1_regs + GPIO1_GDIR);
+/* 配置控制并行总线读写管脚gpio2_25(RD) gpio2_26(WR)的IO复用模式并设置为输出 */
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO2_25);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO2_26);	
+	iowrite32(GPIO2_DIR_RDWR_OUT | ioread32(iobus_dev->gpio2_regs + GPIO2_GDIR), iobus_dev->gpio2_regs + GPIO2_GDIR);
 /* 配置gpio4_15为中断引脚, 上升沿 */
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO4_15);
-	iowrite32(GPIO4_ICR15_RISING | ioread32(iobus_dev->gpio4_regs + GPIO4_ICR1), iobus_dev->gpio4_regs + GPIO4_ICR1);
-	iowrite32(GPIO4_IMR15_ENABLE | ioread32(iobus_dev->gpio4_regs + GPIO4_IMR), iobus_dev->gpio4_regs + GPIO4_IMR);
-	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO1_8);
-	iowrite32(0x100 | ioread32(iobus_dev->gpio1_regs + GPIO1_GDIR), iobus_dev->gpio1_regs + GPIO1_GDIR);
+	iowrite32(IOMUX_MOD_GPIO, iobus_dev->iomux_regs + IOMUX_SW_CTRL_GPIO5_0);
+	iowrite32(GPIO5_ICR0_RISING | ioread32(iobus_dev->gpio5_regs + GPIO5_ICR1), iobus_dev->gpio5_regs + GPIO5_ICR1);
+	iowrite32(GPIO5_IMR0_ENABLE | ioread32(iobus_dev->gpio5_regs + GPIO5_IMR), iobus_dev->gpio5_regs + GPIO5_IMR);
 /* 设置读写信号无效状态 */
 	clr_wr(iobus_dev);
 	clr_rd(iobus_dev);	
@@ -180,14 +193,12 @@ static irqreturn_t hdlc_interrupt_handler(int irq, void *dev_id)
 	unsigned char isr = 0;
 	unsigned char rsr = 0;
 	unsigned int addr = 0;
-	if (irq != gpio_to_irq(GPIO4_15))	
+	if (irq != gpio_to_irq(GPIO5_0_IRQ))	
 	{
 		printk(KERN_ERR "irq number dosen't matched!\n");
 		return IRQ_NONE;
 	}
 	iobus_dev = (IOBUS_DEV *)dev_id;
-	iowrite32(0x100 | ioread32(iobus_dev->gpio1_regs + GPIO1_DR), iobus_dev->gpio1_regs + GPIO1_DR);
-	iowrite32(0xfffffeff & ioread32(iobus_dev->gpio1_regs + GPIO1_DR), iobus_dev->gpio1_regs + GPIO1_DR);
 	/* 判断GPIO ISR 并且清除相应中断标志 */
 /* 总是读不到正确的值所以去掉该段代码
 	isr_gpio = ioread32(iobus_dev->gpio4_regs + GPIO4_ISR);
@@ -206,13 +217,6 @@ static irqreturn_t hdlc_interrupt_handler(int irq, void *dev_id)
 		rsr = read_cpld(iobus_dev, RSR);
 		if (rsr == 0)
 		{
-/*
-			iobus_dev->recv_bytes = (read_cpld(iobus_dev, RDN1) | (read_cpld(iobus_dev, RDN2) << 8)) & 0xFFFF;
-			for (addr=0; addr<iobus_dev->recv_bytes; addr++)
-			{
-				iobus_dev->recv_buf[addr] = read_cpld(iobus_dev, addr);
-			}
-			write_cpld(iobus_dev, RTER, read_cpld(iobus_dev, RTER) | HREC_EN);*/
 			iobus_dev->recv_bytes = (read_cpld(iobus_dev, RDN1) | (read_cpld(iobus_dev, RDN2) << 8)) & 0xFFFF;
 	/*  从CPLD接收双口RAM中读取数据到内核缓存 */
 			for (addr=0; addr<iobus_dev->recv_bytes; addr++)
@@ -223,8 +227,8 @@ static irqreturn_t hdlc_interrupt_handler(int irq, void *dev_id)
 			write_cpld(iobus_dev, RTER, read_cpld(iobus_dev, RTER) | HREC_EN);
 			iobus_dev->recv_stat = IDLE;
 			wake_up_interruptible(&iobus_dev->recv_wq);
-			//tasklet_schedule(&iobus_dev->recv_tasklet);
 			spin_unlock_irq(&iobus_dev->spinlock);
+			//tasklet_schedule(&iobus_dev->recv_tasklet);
 			return IRQ_HANDLED;
 		}
 	}
@@ -234,10 +238,12 @@ static irqreturn_t hdlc_interrupt_handler(int irq, void *dev_id)
 		write_cpld(iobus_dev, RXTXEN, RXTXEN_R);
 		write_cpld(iobus_dev, RTER, read_cpld(iobus_dev, RTER) | HREC_EN);
 		iobus_dev->send_stat = IDLE;
+		del_timer(&wr_timer);
 		wake_up_interruptible(&iobus_dev->send_wq);
 		spin_unlock_irq(&iobus_dev->spinlock);
 		return IRQ_HANDLED;
 	}
+	spin_unlock_irq(&iobus_dev->spinlock);  //20170704添加默认状态没有释放锁
 	return IRQ_NONE;
 }
 /* 接收中断底半部 */
@@ -276,7 +282,7 @@ static int iobus_open(struct inode *inode, struct file *filp)
 	/* 初始化工作，包括gpio、hdlc寄存器、中断以及等待队列等 */
 	gpio_init(iobus_dev);
 	hdlc_init(iobus_dev);
-	if (request_irq(gpio_to_irq(GPIO4_15), &hdlc_interrupt_handler, IRQF_DISABLED, DEV_NAME, iobus_dev))
+	if (0 != request_irq(gpio_to_irq(GPIO5_0_IRQ), &hdlc_interrupt_handler, IRQF_DISABLED, DEV_NAME, iobus_dev))
 	{
 		printk(KERN_ERR "can't request irq for gpio4_15!\n");
 		return -EAGAIN;
@@ -284,6 +290,9 @@ static int iobus_open(struct inode *inode, struct file *filp)
 	tasklet_init(&iobus_dev->recv_tasklet, recv_tasklet_func, (unsigned long)iobus_dev);
 	init_waitqueue_head(&iobus_dev->send_wq);
 	init_waitqueue_head(&iobus_dev->recv_wq);
+	init_timer(&wr_timer);//20170704添加定时器，针对丢中断
+	wr_timer.data = (unsigned long)iobus_dev;//20170704添加定时器，针对丢中断
+	wr_timer.function = wr_timer_func;//20170704添加定时器，针对丢中断
 	return 0;
 }
 
@@ -292,8 +301,9 @@ static int iobus_open(struct inode *inode, struct file *filp)
 static int iobus_close(struct inode *inode, struct file *filp)
 {
 	IOBUS_DEV *iobus_dev = (IOBUS_DEV *)filp->private_data;
-	free_irq(gpio_to_irq(GPIO4_15), iobus_dev);
+	free_irq(gpio_to_irq(GPIO5_0_IRQ), iobus_dev);
 	tasklet_kill(&iobus_dev->recv_tasklet);
+	del_timer(&wr_timer);  //20170704添加定时器，针对丢中断
 	filp->private_data = NULL;
 	return 0;
 }
@@ -332,6 +342,8 @@ static ssize_t iobus_write(struct file *filp, const char __user* buf, size_t cou
 	write_cpld(iobus_dev, RTER, read_cpld(iobus_dev, RTER) | HSND_EN);
 	/* 设置发送状态为繁忙，用与在定时发送广播时对进程的阻塞 */
 	iobus_dev->send_stat = BUSY;
+    wr_timer.expires = jiffies + HZ;	//1秒定时
+	add_timer(&wr_timer);  //开始发送启动1s定时器
 	spin_unlock_irq(&iobus_dev->spinlock);
 	return count;
 }
@@ -346,10 +358,12 @@ static ssize_t iobus_read(struct file *filp, char __user *buf, size_t count, lof
 			return -EAGAIN;
 		wait_event_interruptible(iobus_dev->recv_wq, iobus_dev->recv_stat == IDLE);
 	}
+	spin_lock_irq(&iobus_dev->spinlock);
 	if (copy_to_user(buf, iobus_dev->recv_buf, iobus_dev->recv_bytes))
 	{
 		return -EFAULT;
 	}
+	spin_unlock_irq(&iobus_dev->spinlock);
 	iobus_dev->recv_stat = BUSY;
 	return iobus_dev->recv_bytes;
 }
@@ -358,6 +372,7 @@ static unsigned int iobus_poll(struct file *filp, struct poll_table_struct *poll
 {
 	unsigned int mask = 0;
 	IOBUS_DEV *iobus_dev = (IOBUS_DEV *)filp->private_data;
+	spin_lock_irq(&iobus_dev->spinlock);
 	poll_wait(filp, &iobus_dev->send_wq, poll_table);
 	poll_wait(filp, &iobus_dev->recv_wq, poll_table);
 	/* 如果驱动从CPLD接收双口RAM读取数据完成，则可以通知用户态取走数据 */
@@ -368,10 +383,11 @@ static unsigned int iobus_poll(struct file *filp, struct poll_table_struct *poll
 	 */
 	if (iobus_dev->send_stat == IDLE)
 		mask |= POLLOUT | POLLWRNORM;
+	spin_unlock_irq(&iobus_dev->spinlock);
 	return mask;
 }
 
-static int iobus_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long arg)
+static long iobus_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	IOBUS_DEV *iobus_dev = (IOBUS_DEV *)filp->private_data;
 	if (_IOC_TYPE(cmd) != IOBUS_IOC_MAGIC)
@@ -406,7 +422,7 @@ static struct file_operations fops = {
 	.write = iobus_write,
 	.read = iobus_read,
 	.poll = iobus_poll,
-	.ioctl = iobus_ioctl,
+	.unlocked_ioctl = iobus_unlocked_ioctl,
 };
 
 static int __init iobus_init(void)
@@ -458,12 +474,12 @@ static int __init iobus_init(void)
 		ret = -1;
 		goto ioremap_iomux_err;
 	}
-	iobus_dev_glb->gpio4_regs = ioremap(GPIO4_BASE, GPIO4_MEM_SIZE);
-	if (iobus_dev_glb->gpio4_regs == NULL)
+	iobus_dev_glb->gpio2_regs = ioremap(GPIO2_BASE, GPIO2_MEM_SIZE);
+	if (iobus_dev_glb->gpio2_regs == NULL)
 	{
-		printk(KERN_ERR "can't remap GPIO4 memory to virtual address!\n");
+		printk(KERN_ERR "can't remap GPIO2 memory to virtual address!\n");
 		ret = -1;
-		goto ioremap_gpio4_err;
+		goto ioremap_gpio2_err;
 	}
 	iobus_dev_glb->gpio3_regs = ioremap(GPIO3_BASE, GPIO3_MEM_SIZE);
 	if (iobus_dev_glb->gpio3_regs == NULL)
@@ -472,19 +488,19 @@ static int __init iobus_init(void)
 		ret = -1;
 		goto ioremap_gpio3_err;
 	}
-	iobus_dev_glb->gpio1_regs = ioremap(GPIO1_BASE, GPIO1_MEM_SIZE);
-	if (iobus_dev_glb->gpio1_regs == NULL)
+	iobus_dev_glb->gpio5_regs = ioremap(GPIO5_BASE, GPIO5_MEM_SIZE);
+	if (iobus_dev_glb->gpio5_regs == NULL)
 	{
-		printk(KERN_ERR "can't remap GPIO3 memory to virtual address!\n");
+		printk(KERN_ERR "can't remap GPIO5 memory to virtual address!\n");
 		ret = -1;
-		goto ioremap_gpio1_err;
+		goto ioremap_gpio5_err;
 	}
 	return 0;
-ioremap_gpio1_err:
+ioremap_gpio5_err:
 	iounmap(iobus_dev_glb->gpio3_regs);
 ioremap_gpio3_err:
-	iounmap(iobus_dev_glb->gpio4_regs);
-ioremap_gpio4_err:
+	iounmap(iobus_dev_glb->gpio2_regs);
+ioremap_gpio2_err:
 	iounmap(iobus_dev_glb->iomux_regs);
 ioremap_iomux_err:
 	device_destroy(iobus_dev_class, devno);
@@ -501,9 +517,9 @@ alloc_chrdev_region_err:
 
 static void __exit iobus_exit(void)
 {
-	iounmap(iobus_dev_glb->gpio1_regs);
+	iounmap(iobus_dev_glb->gpio5_regs);
 	iounmap(iobus_dev_glb->gpio3_regs);
-	iounmap(iobus_dev_glb->gpio4_regs);
+	iounmap(iobus_dev_glb->gpio2_regs);
 	iounmap(iobus_dev_glb->iomux_regs);
 	device_destroy(iobus_dev_class, devno);
 	class_destroy(iobus_dev_class);
